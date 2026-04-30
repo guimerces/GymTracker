@@ -17,7 +17,7 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static files from client directory
-app.use(express.static(path.join(__dirname, '..', '..', 'client')));
+app.use(express.static(path.join(__dirname, '..', 'client')));
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -34,7 +34,7 @@ app.get('/api/health', (req, res) => {
 // SPA fallback - serve index.html for non-API routes
 app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
-        res.sendFile(path.join(__dirname, '..', '..', 'client', 'index.html'));
+        res.sendFile(path.join(__dirname, '..', 'client', 'index.html'));
     }
 });
 
