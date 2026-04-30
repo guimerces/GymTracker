@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GymTracker — Dashboard</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-inner">
+            <div class="navbar-brand">🏋️ GymTracker</div>
+            <div class="navbar-nav">
+                <a href="/dashboard.html" class="active"><span>📊</span> Dashboard</a>
+                <a href="/workouts.html"><span>📋</span> Treinos</a>
+                <a href="/train.html"><span>💪</span> Treinar</a>
+            </div>
+            <div class="navbar-user">
+                <span id="user-name"></span>
+                <button class="btn btn-ghost btn-sm" id="btn-logout">Sair</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div class="page-header">
+            <h1 id="greeting">Bom dia! 💪</h1>
+            <p>Aqui está o resumo do seu progresso</p>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid" id="stats-grid">
+            <div class="card stat-card">
+                <div class="stat-icon purple">📋</div>
+                <div><div class="stat-value" id="stat-workouts">-</div><div class="stat-label">Treinos Cadastrados</div></div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-icon green">✅</div>
+                <div><div class="stat-value" id="stat-sessions">-</div><div class="stat-label">Sessões Concluídas</div></div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-icon orange">🔥</div>
+                <div><div class="stat-value" id="stat-streak">-</div><div class="stat-label">Dias Seguidos</div></div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-icon red">⚡</div>
+                <div><div class="stat-value" id="stat-volume">-</div><div class="stat-label">Volume Total (kg)</div></div>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Recent Sessions -->
+            <div class="card">
+                <div class="section-title">📅 Sessões Recentes</div>
+                <div id="recent-sessions">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+
+            <!-- Weight Progress Chart -->
+            <div class="card">
+                <div class="section-title">📈 Evolução de Peso</div>
+                <div class="form-group">
+                    <select id="chart-exercise" class="form-control">
+                        <option value="">Selecione um exercício...</option>
+                    </select>
+                </div>
+                <div class="chart-container">
+                    <canvas id="weight-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div style="display:flex;gap:16px;justify-content:center;margin:32px 0 48px;">
+            <a href="/train.html" class="btn btn-primary btn-lg">💪 Começar Treino</a>
+            <a href="/workouts.html" class="btn btn-secondary btn-lg">📋 Gerenciar Treinos</a>
+        </div>
+    </main>
+
+    <script src="/js/api.js"></script>
+    <script>
+        if (!api.isAuthenticated()) window.location.href = '/';
+
+        let weightChart;
+
+        async function loadDashboard() {
+            try {
+                const [user, overview, exercises] = await Promise.all([
+                    api.getMe(),
+                    api.getOverview(),
+                    api.getExerciseList()
+                ]);
+
+                document.getElementById('user-name').textContent = user.name;
+
+                // Greeting based on time
+                const h = new Date().getHours();
+                const greet = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+                document.getElementById('greeting').textContent = `${greet}, ${user.name.split(' ')[0]}! 💪`;
+
+                // Stats
+                document.getElementById('stat-workouts').textContent = overview.totalWorkouts;
+                document.getElementById('stat-sessions').textContent = overview.totalSessions;
+                document.getElementById('stat-streak').textContent = overview.streak;
+                document.getElementById('stat-volume').textContent = overview.totalVolume.toLocaleString('pt-BR');
+
+                // Recent sessions
+                const container = document.getElementById('recent-sessions');
+                if (overview.recentSessions.length === 0) {
+                    container.innerHTML = `<div class="empty-state"><div class="icon">📭</div><p>Nenhuma sessão ainda. Comece a treinar!</p></div>`;
+                } else {
+                    container.innerHTML = overview.recentSessions.map(s => {
+                        const date = new Date(s.finished_at + 'Z');
+                        const dur = s.duration_seconds ? formatTime(s.duration_seconds) : '--:--';
+                        return `<div class="exercise-item">
+                            <div class="exercise-item-info">
+                                <div class="exercise-order">${s.workout_name.charAt(s.workout_name.length-1)}</div>
+                                <div>
+                                    <div class="exercise-item-name">${s.workout_name}</div>
+                                    <div class="exercise-item-detail">${date.toLocaleDateString('pt-BR')} • ${dur}</div>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+
+                // Exercise select for chart
+                const sel = document.getElementById('chart-exercise');
+                exercises.forEach(ex => {
+                    const opt = document.createElement('option');
+                    opt.value = ex; opt.textContent = ex;
+                    sel.appendChild(opt);
+                });
+                if (exercises.length > 0) {
+                    sel.value = exercises[0];
+                    loadChart(exercises[0]);
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function loadChart(exerciseName) {
+            if (!exerciseName) return;
+            try {
+                const data = await api.getWeightProgress(exerciseName);
+                const labels = data.map(d => {
+                    const dt = new Date(d.date + 'Z');
+                    return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                });
+                const weights = data.map(d => d.max_weight);
+
+                if (weightChart) weightChart.destroy();
+
+                const ctx = document.getElementById('weight-chart').getContext('2d');
+                const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                gradient.addColorStop(0, 'rgba(108, 92, 231, 0.3)');
+                gradient.addColorStop(1, 'rgba(108, 92, 231, 0)');
+
+                weightChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [{
+                            label: 'Peso (kg)',
+                            data: weights,
+                            borderColor: '#6c5ce7',
+                            backgroundColor: gradient,
+                            fill: true,
+                            tension: 0.4,
+                            pointBackgroundColor: '#a855f7',
+                            pointBorderColor: '#6c5ce7',
+                            pointRadius: 5,
+                            pointHoverRadius: 8
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            x: { ticks: { color: '#8888a0' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+                            y: { ticks: { color: '#8888a0' }, grid: { color: 'rgba(255,255,255,0.04)' } }
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        document.getElementById('chart-exercise').addEventListener('change', e => loadChart(e.target.value));
+        document.getElementById('btn-logout').addEventListener('click', () => api.logout());
+
+        loadDashboard();
+    </script>
+</body>
+</html>

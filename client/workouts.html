@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GymTracker — Meus Treinos</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-inner">
+            <div class="navbar-brand">🏋️ GymTracker</div>
+            <div class="navbar-nav">
+                <a href="/dashboard.html"><span>📊</span> Dashboard</a>
+                <a href="/workouts.html" class="active"><span>📋</span> Treinos</a>
+                <a href="/train.html"><span>💪</span> Treinar</a>
+            </div>
+            <div class="navbar-user">
+                <span id="user-name"></span>
+                <button class="btn btn-ghost btn-sm" id="btn-logout">Sair</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+            <div><h1>Meus Treinos</h1><p>Cadastre e organize seus treinos</p></div>
+            <button class="btn btn-primary" id="btn-add-workout">+ Novo Treino</button>
+        </div>
+
+        <div id="workouts-container">
+            <div class="spinner"></div>
+        </div>
+    </main>
+
+    <!-- Modal: New/Edit Workout -->
+    <div class="modal-overlay hidden" id="modal-workout">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-workout-title">Novo Treino</h2>
+                <button class="btn btn-ghost btn-icon sm" id="modal-workout-close">✕</button>
+            </div>
+            <form id="form-workout">
+                <div class="form-group">
+                    <label for="workout-name">Nome do Treino</label>
+                    <input type="text" id="workout-name" class="form-control" placeholder="ex: Treino A — Peito e Tríceps" required>
+                </div>
+                <input type="hidden" id="workout-id">
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-ghost" id="modal-workout-cancel">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Add Exercise -->
+    <div class="modal-overlay hidden" id="modal-exercise">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-exercise-title">Adicionar Exercício</h2>
+                <button class="btn btn-ghost btn-icon sm" id="modal-exercise-close">✕</button>
+            </div>
+            <form id="form-exercise">
+                <div class="form-group">
+                    <label for="exercise-name">Nome do Exercício</label>
+                    <input type="text" id="exercise-name" class="form-control" placeholder="ex: Supino Reto" required>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group">
+                        <label for="exercise-sets">Séries</label>
+                        <input type="number" id="exercise-sets" class="form-control" value="3" min="1" max="10" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="exercise-reps">Repetições (alvo)</label>
+                        <input type="number" id="exercise-reps" class="form-control" value="12" min="1" max="50" required>
+                    </div>
+                </div>
+                <input type="hidden" id="exercise-workout-id">
+                <input type="hidden" id="exercise-id">
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-ghost" id="modal-exercise-cancel">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script>
+        if (!api.isAuthenticated()) window.location.href = '/';
+
+        async function loadUser() {
+            try {
+                const user = await api.getMe();
+                document.getElementById('user-name').textContent = user.name;
+            } catch(e) {}
+        }
+
+        async function loadWorkouts() {
+            const container = document.getElementById('workouts-container');
+            try {
+                const workouts = await api.getWorkouts();
+                if (workouts.length === 0) {
+                    container.innerHTML = `<div class="empty-state"><div class="icon">📋</div><h3>Nenhum treino cadastrado</h3><p>Crie seu primeiro treino para começar!</p></div>`;
+                    return;
+                }
+
+                let html = '<div class="workout-list">';
+                for (const w of workouts) {
+                    const exercises = await api.getExercises(w.id);
+                    const letter = w.name.match(/[A-Za-z]/)?.[0]?.toUpperCase() || (w.order_index + 1);
+                    html += `
+                    <div class="card workout-card-wrapper" data-id="${w.id}">
+                        <div class="workout-card">
+                            <div class="workout-card-left">
+                                <div class="workout-card-letter">${letter}</div>
+                                <div class="workout-card-info">
+                                    <h3>${w.name}</h3>
+                                    <p>${exercises.length} exercício(s)</p>
+                                </div>
+                            </div>
+                            <div class="workout-card-actions">
+                                <button class="btn btn-secondary btn-sm btn-add-ex" data-id="${w.id}">+ Exercício</button>
+                                <button class="btn btn-ghost btn-icon sm btn-edit-workout" data-id="${w.id}" data-name="${w.name}">✏️</button>
+                                <button class="btn btn-danger btn-icon sm btn-del-workout" data-id="${w.id}">🗑️</button>
+                            </div>
+                        </div>
+                        <div class="exercise-list">
+                            ${exercises.length === 0 ? '<p style="padding:12px 16px;color:var(--text-muted);font-size:0.85rem;">Nenhum exercício adicionado</p>' :
+                            exercises.map((ex, i) => `
+                                <div class="exercise-item">
+                                    <div class="exercise-item-info">
+                                        <div class="exercise-order">${i + 1}</div>
+                                        <div>
+                                            <div class="exercise-item-name">${ex.exercise_name}</div>
+                                            <div class="exercise-item-detail">${ex.target_sets} séries × ${ex.target_reps} reps</div>
+                                        </div>
+                                    </div>
+                                    <div style="display:flex;gap:4px;">
+                                        <button class="btn btn-ghost btn-icon sm btn-edit-ex" data-id="${ex.id}" data-name="${ex.exercise_name}" data-sets="${ex.target_sets}" data-reps="${ex.target_reps}" data-wid="${w.id}">✏️</button>
+                                        <button class="btn btn-danger btn-icon sm btn-del-ex" data-id="${ex.id}">🗑️</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>`;
+                }
+                html += '</div>';
+                container.innerHTML = html;
+                attachListeners();
+            } catch (err) {
+                container.innerHTML = `<div class="empty-state"><p>Erro ao carregar: ${err.message}</p></div>`;
+            }
+        }
+
+        function attachListeners() {
+            document.querySelectorAll('.btn-add-ex').forEach(btn => {
+                btn.addEventListener('click', () => openExerciseModal(parseInt(btn.dataset.id)));
+            });
+            document.querySelectorAll('.btn-edit-workout').forEach(btn => {
+                btn.addEventListener('click', () => openWorkoutModal(parseInt(btn.dataset.id), btn.dataset.name));
+            });
+            document.querySelectorAll('.btn-del-workout').forEach(btn => {
+                btn.addEventListener('click', () => deleteWorkout(parseInt(btn.dataset.id)));
+            });
+            document.querySelectorAll('.btn-edit-ex').forEach(btn => {
+                btn.addEventListener('click', () => openExerciseModal(parseInt(btn.dataset.wid), parseInt(btn.dataset.id), btn.dataset.name, btn.dataset.sets, btn.dataset.reps));
+            });
+            document.querySelectorAll('.btn-del-ex').forEach(btn => {
+                btn.addEventListener('click', () => deleteExercise(parseInt(btn.dataset.id)));
+            });
+        }
+
+        // Workout Modal
+        function openWorkoutModal(id = null, name = '') {
+            document.getElementById('modal-workout-title').textContent = id ? 'Editar Treino' : 'Novo Treino';
+            document.getElementById('workout-id').value = id || '';
+            document.getElementById('workout-name').value = name;
+            document.getElementById('modal-workout').classList.remove('hidden');
+        }
+        function closeWorkoutModal() { document.getElementById('modal-workout').classList.add('hidden'); }
+
+        document.getElementById('btn-add-workout').addEventListener('click', () => openWorkoutModal());
+        document.getElementById('modal-workout-close').addEventListener('click', closeWorkoutModal);
+        document.getElementById('modal-workout-cancel').addEventListener('click', closeWorkoutModal);
+        document.getElementById('modal-workout').addEventListener('click', e => { if (e.target === e.currentTarget) closeWorkoutModal(); });
+
+        document.getElementById('form-workout').addEventListener('submit', async e => {
+            e.preventDefault();
+            const id = document.getElementById('workout-id').value;
+            const name = document.getElementById('workout-name').value;
+            try {
+                if (id) await api.updateWorkout(parseInt(id), { name });
+                else await api.createWorkout(name);
+                closeWorkoutModal();
+                showToast(id ? 'Treino atualizado!' : 'Treino criado!', 'success');
+                loadWorkouts();
+            } catch (err) { showToast(err.message, 'error'); }
+        });
+
+        async function deleteWorkout(id) {
+            if (!confirm('Tem certeza que deseja excluir este treino e todos os exercícios?')) return;
+            try {
+                await api.deleteWorkout(id);
+                showToast('Treino excluído', 'success');
+                loadWorkouts();
+            } catch (err) { showToast(err.message, 'error'); }
+        }
+
+        // Exercise Modal
+        function openExerciseModal(workoutId, exId = null, name = '', sets = 3, reps = 12) {
+            document.getElementById('modal-exercise-title').textContent = exId ? 'Editar Exercício' : 'Adicionar Exercício';
+            document.getElementById('exercise-workout-id').value = workoutId;
+            document.getElementById('exercise-id').value = exId || '';
+            document.getElementById('exercise-name').value = name;
+            document.getElementById('exercise-sets').value = sets;
+            document.getElementById('exercise-reps').value = reps;
+            document.getElementById('modal-exercise').classList.remove('hidden');
+        }
+        function closeExerciseModal() { document.getElementById('modal-exercise').classList.add('hidden'); }
+
+        document.getElementById('modal-exercise-close').addEventListener('click', closeExerciseModal);
+        document.getElementById('modal-exercise-cancel').addEventListener('click', closeExerciseModal);
+        document.getElementById('modal-exercise').addEventListener('click', e => { if (e.target === e.currentTarget) closeExerciseModal(); });
+
+        document.getElementById('form-exercise').addEventListener('submit', async e => {
+            e.preventDefault();
+            const wId = parseInt(document.getElementById('exercise-workout-id').value);
+            const exId = document.getElementById('exercise-id').value;
+            const data = {
+                exercise_name: document.getElementById('exercise-name').value,
+                target_sets: parseInt(document.getElementById('exercise-sets').value),
+                target_reps: parseInt(document.getElementById('exercise-reps').value)
+            };
+            try {
+                if (exId) await api.updateExercise(parseInt(exId), data);
+                else await api.addExercise(wId, data);
+                closeExerciseModal();
+                showToast(exId ? 'Exercício atualizado!' : 'Exercício adicionado!', 'success');
+                loadWorkouts();
+            } catch (err) { showToast(err.message, 'error'); }
+        });
+
+        async function deleteExercise(id) {
+            if (!confirm('Excluir este exercício?')) return;
+            try {
+                await api.deleteExercise(id);
+                showToast('Exercício excluído', 'success');
+                loadWorkouts();
+            } catch (err) { showToast(err.message, 'error'); }
+        }
+
+        document.getElementById('btn-logout').addEventListener('click', () => api.logout());
+
+        loadUser();
+        loadWorkouts();
+    </script>
+</body>
+</html>

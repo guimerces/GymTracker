@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="GymTracker - Gerencie sua carga de treino de forma inteligente">
+    <title>GymTracker — Login</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="auth-page">
+        <div class="auth-card" id="auth-card">
+            <!-- Login Form -->
+            <div id="login-view">
+                <h1>🏋️ GymTracker</h1>
+                <p>Gerencie sua carga de treino de forma inteligente</p>
+                <div id="login-error" class="auth-error hidden"></div>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="login-email">Email</label>
+                        <input type="email" id="login-email" class="form-control" placeholder="seu@email.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Senha</label>
+                        <input type="password" id="login-password" class="form-control" placeholder="••••••" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg" style="width:100%">Entrar</button>
+                </form>
+                <div class="auth-toggle">
+                    Não tem conta? <a href="#" id="show-register">Criar conta</a>
+                </div>
+            </div>
+
+            <!-- Register Form -->
+            <div id="register-view" class="hidden">
+                <h1>Criar Conta</h1>
+                <p>Comece a rastrear seus treinos agora</p>
+                <div id="register-error" class="auth-error hidden"></div>
+                <form id="register-form">
+                    <div class="form-group">
+                        <label for="register-name">Nome</label>
+                        <input type="text" id="register-name" class="form-control" placeholder="Seu nome" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="register-email">Email</label>
+                        <input type="email" id="register-email" class="form-control" placeholder="seu@email.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="register-password">Senha</label>
+                        <input type="password" id="register-password" class="form-control" placeholder="Mínimo 6 caracteres" required minlength="6">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg" style="width:100%">Criar Conta</button>
+                </form>
+                <div class="auth-toggle">
+                    Já tem conta? <a href="#" id="show-login">Fazer login</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script>
+        // Redirect if already logged in
+        if (api.isAuthenticated()) window.location.href = '/dashboard.html';
+
+        const loginView = document.getElementById('login-view');
+        const registerView = document.getElementById('register-view');
+
+        document.getElementById('show-register').addEventListener('click', e => {
+            e.preventDefault();
+            loginView.classList.add('hidden');
+            registerView.classList.remove('hidden');
+        });
+        document.getElementById('show-login').addEventListener('click', e => {
+            e.preventDefault();
+            registerView.classList.add('hidden');
+            loginView.classList.remove('hidden');
+        });
+
+        document.getElementById('login-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const errEl = document.getElementById('login-error');
+            errEl.classList.add('hidden');
+            try {
+                const res = await api.login(
+                    document.getElementById('login-email').value,
+                    document.getElementById('login-password').value
+                );
+                api.setToken(res.token);
+                window.location.href = '/dashboard.html';
+            } catch (err) {
+                errEl.textContent = err.message;
+                errEl.classList.remove('hidden');
+            }
+        });
+
+        document.getElementById('register-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const errEl = document.getElementById('register-error');
+            errEl.classList.add('hidden');
+            try {
+                const res = await api.register(
+                    document.getElementById('register-name').value,
+                    document.getElementById('register-email').value,
+                    document.getElementById('register-password').value
+                );
+                api.setToken(res.token);
+                window.location.href = '/dashboard.html';
+            } catch (err) {
+                errEl.textContent = err.message;
+                errEl.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>

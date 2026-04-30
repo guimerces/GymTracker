@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GymTracker — Treinar</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-inner">
+            <div class="navbar-brand">🏋️ GymTracker</div>
+            <div class="navbar-nav">
+                <a href="/dashboard.html"><span>📊</span> Dashboard</a>
+                <a href="/workouts.html"><span>📋</span> Treinos</a>
+                <a href="/train.html" class="active"><span>💪</span> Treinar</a>
+            </div>
+            <div class="navbar-user">
+                <span id="user-name"></span>
+                <button class="btn btn-ghost btn-sm" id="btn-logout">Sair</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container">
+        <!-- Suggestion View -->
+        <div id="suggestion-view">
+            <div class="train-header">
+                <h1>💪 Hora de Treinar!</h1>
+                <p class="text-muted mt-1" id="suggestion-text">Carregando sugestão...</p>
+            </div>
+            <div id="suggestion-content"><div class="spinner"></div></div>
+        </div>
+
+        <!-- Active Training View -->
+        <div id="training-view" class="hidden">
+            <div class="train-header">
+                <h1 id="training-title">Treinando...</h1>
+                <div class="train-timer">
+                    <span class="dot"></span>
+                    <span id="main-timer">00:00</span>
+                </div>
+            </div>
+            <div id="exercises-container"></div>
+            <div style="text-align:center;margin:32px 0 48px;">
+                <button class="btn btn-success btn-lg" id="btn-finish-session">✅ Finalizar Treino</button>
+            </div>
+        </div>
+    </main>
+
+    <script src="/js/api.js"></script>
+    <script>
+        if (!api.isAuthenticated()) window.location.href = '/';
+
+        let currentSession = null;
+        let suggestion = null;
+        let mainTimerInterval = null;
+        let mainTimerStart = null;
+        let restTimers = {};
+        let currentWeights = {}; // Preserve user-entered weights across re-renders
+
+        async function init() {
+            try {
+                const user = await api.getMe();
+                document.getElementById('user-name').textContent = user.name;
+
+                // Check for active session
+                const active = await api.getActiveSession();
+                if (active) {
+                    currentSession = active;
+                    mainTimerStart = new Date(active.started_at + 'Z');
+                    await enterTrainingMode();
+                    return;
+                }
+
+                // Load suggestion
+                await loadSuggestion();
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function loadSuggestion() {
+            try {
+                suggestion = await api.getSuggestion();
+                const textEl = document.getElementById('suggestion-text');
+                const contentEl = document.getElementById('suggestion-content');
+
+                if (!suggestion.suggestion) {
+                    textEl.textContent = suggestion.message;
+                    contentEl.innerHTML = `<div class="empty-state"><div class="icon">📋</div><h3>Cadastre treinos primeiro</h3><p>Vá para a página de treinos e crie seus treinos A, B, C...</p><a href="/workouts.html" class="btn btn-primary mt-2">Ir para Treinos</a></div>`;
+                    return;
+                }
+
+                textEl.textContent = suggestion.message;
+                if (suggestion.lastSession) {
+                    const dt = new Date(suggestion.lastSession.date + 'Z');
+                    textEl.textContent += ` • Último: ${suggestion.lastSession.workout_name} em ${dt.toLocaleDateString('pt-BR')}`;
+                }
+
+                let html = '<div style="max-width:600px;margin:0 auto;">';
+
+                // Exercise preview cards
+                suggestion.exercises.forEach(ex => {
+                    const rec = ex.recommendation;
+                    let recClass = 'first', recIcon = '🆕';
+                    if (rec.hasHistory) {
+                        recClass = rec.shouldIncrease ? 'increase' : 'maintain';
+                        recIcon = rec.shouldIncrease ? '🔥' : '📊';
+                    }
+
+                    html += `
+                    <div class="card exercise-card">
+                        <div class="exercise-card-header">
+                            <h3>${ex.exercise_name}</h3>
+                            <span class="badge badge-accent">${ex.target_sets}×${ex.target_reps}</span>
+                        </div>
+                        <div class="recommendation-bar ${recClass}">
+                            <span>${recIcon}</span>
+                            <span>${rec.message}</span>
+                        </div>
+                        ${rec.hasHistory && rec.previousSets.length > 0 ? `
+                        <div style="font-size:0.8rem;color:var(--text-secondary);">
+                            Última vez: ${rec.previousSets.map(s => `S${s.set}: ${s.reps}reps @ ${s.weight}kg`).join(' | ')}
+                        </div>` : ''}
+                    </div>`;
+                });
+
+                html += `<div style="text-align:center;margin:24px 0;"><button class="btn btn-primary btn-lg" id="btn-start-session">🏋️ Iniciar Treino</button></div></div>`;
+                contentEl.innerHTML = html;
+
+                document.getElementById('btn-start-session').addEventListener('click', startSession);
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function startSession() {
+            try {
+                currentSession = await api.startSession(suggestion.suggestion.id);
+                mainTimerStart = new Date(currentSession.started_at + 'Z');
+                await enterTrainingMode();
+                showToast('Treino iniciado! Bora! 💪', 'success');
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function enterTrainingMode() {
+            document.getElementById('suggestion-view').classList.add('hidden');
+            document.getElementById('training-view').classList.remove('hidden');
+            document.getElementById('training-title').textContent = currentSession.workout_name;
+
+            // Start main timer
+            startMainTimer();
+
+            // Load exercises with recommendations
+            if (!suggestion) {
+                suggestion = await api.getSuggestion();
+            }
+
+            // Load existing sets for this session
+            const existingSets = await api.getSessionSets(currentSession.id);
+
+            renderExercises(suggestion.exercises, existingSets);
+        }
+
+        function startMainTimer() {
+            if (mainTimerInterval) clearInterval(mainTimerInterval);
+            mainTimerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - mainTimerStart.getTime()) / 1000);
+                document.getElementById('main-timer').textContent = formatTime(elapsed);
+            }, 1000);
+        }
+
+        function renderExercises(exercises, existingSets) {
+            // Save current weight values before re-rendering
+            exercises.forEach(ex => {
+                const el = document.getElementById(`weight-${ex.id}`);
+                if (el && el.value !== '') currentWeights[ex.id] = el.value;
+            });
+
+            const container = document.getElementById('exercises-container');
+            let html = '';
+
+            exercises.forEach((ex, idx) => {
+                const exSets = existingSets.filter(s => s.workout_exercise_id === ex.id);
+                const rec = ex.recommendation;
+                let recClass = 'first';
+                if (rec.hasHistory) recClass = rec.shouldIncrease ? 'increase' : 'maintain';
+
+                // Weight priority: user-entered > last set in session > recommendation
+                let weightValue;
+                if (currentWeights[ex.id] !== undefined) {
+                    weightValue = currentWeights[ex.id];
+                } else if (exSets.length > 0) {
+                    weightValue = exSets[exSets.length - 1].weight_kg;
+                } else if (rec.hasHistory) {
+                    weightValue = rec.recommendedWeight;
+                } else {
+                    weightValue = '';
+                }
+
+                html += `
+                <div class="card exercise-card" id="exercise-${ex.id}">
+                    <div class="exercise-card-header">
+                        <h3>${idx + 1}. ${ex.exercise_name}</h3>
+                        <span class="badge badge-accent">${ex.target_sets}×${ex.target_reps}</span>
+                    </div>
+                    <div class="recommendation-bar ${recClass}">
+                        <span>${!rec.hasHistory ? '🆕' : rec.shouldIncrease ? '🔥' : '📊'}</span>
+                        <span>${rec.message}</span>
+                    </div>
+                    ${rec.hasHistory && rec.previousSets.length > 0 ? `
+                    <div style="padding:0 2px;margin-bottom:12px;">
+                        <div style="font-size:0.75rem;font-weight:500;color:var(--text-muted);margin-bottom:4px;">Último treino: ${rec.previousSets.map(s => `S${s.set}: ${s.reps} reps × ${s.weight}kg`).join('  ·  ')}  —  Total: ${rec.totalReps} reps</div>
+                    </div>` : ''}
+
+                    <!-- Weight input -->
+                    <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
+                        <label style="font-size:0.85rem;color:var(--text-secondary);white-space:nowrap;">Peso (kg):</label>
+                        <input type="number" step="0.5" min="0" class="form-control input-number" id="weight-${ex.id}"
+                            value="${weightValue}" placeholder="0">
+                    </div>
+
+                    <!-- Sets table -->
+                    <table class="sets-table">
+                        <thead><tr><th>Série</th><th>Reps</th><th>Peso</th><th></th></tr></thead>
+                        <tbody id="sets-body-${ex.id}">
+                            ${exSets.map(s => `
+                                <tr class="set-done" data-set-id="${s.id}">
+                                    <td><span class="set-number">${s.set_number}</span></td>
+                                    <td><strong>${s.reps}</strong></td>
+                                    <td>${s.weight_kg}kg</td>
+                                    <td><button class="btn btn-danger btn-icon sm btn-del-set" data-set-id="${s.id}" data-ex-id="${ex.id}">✕</button></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+
+                    <!-- Add set row -->
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:12px;" id="add-set-row-${ex.id}">
+                        <span class="set-number">${exSets.length + 1}</span>
+                        <input type="number" min="0" max="50" class="form-control input-number" id="reps-input-${ex.id}" placeholder="reps">
+                        <button class="btn btn-primary btn-sm" onclick="addSet(${ex.id})">✓ Registrar</button>
+                    </div>
+
+                    <!-- Rest Timer -->
+                    <div class="rest-timer-bar" id="rest-timer-${ex.id}">
+                        <button class="btn btn-secondary btn-sm" onclick="toggleRestTimer(${ex.id})">⏱️ Descanso</button>
+                        <div class="rest-timer-display" id="rest-display-${ex.id}">00:00</div>
+                        <button class="btn btn-ghost btn-sm" onclick="resetRestTimer(${ex.id})">↺ Reset</button>
+                    </div>
+                </div>`;
+            });
+
+            container.innerHTML = html;
+
+            // Track weight changes by the user
+            exercises.forEach(ex => {
+                const el = document.getElementById(`weight-${ex.id}`);
+                if (el) el.addEventListener('input', () => { currentWeights[ex.id] = el.value; });
+            });
+
+            // Attach delete set listeners
+            container.querySelectorAll('.btn-del-set').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const setId = parseInt(btn.dataset.setId);
+                    const exId = parseInt(btn.dataset.exId);
+                    try {
+                        await api.deleteSet(currentSession.id, setId);
+                        showToast('Série removida', 'info');
+                        const sets = await api.getSessionSets(currentSession.id);
+                        renderExercises(suggestion.exercises, sets);
+                    } catch (err) { showToast(err.message, 'error'); }
+                });
+            });
+        }
+
+        async function addSet(exerciseId) {
+            const repsInput = document.getElementById(`reps-input-${exerciseId}`);
+            const weightInput = document.getElementById(`weight-${exerciseId}`);
+            const reps = parseInt(repsInput.value);
+            const weight = parseFloat(weightInput.value) || 0;
+
+            if (!reps || reps <= 0) {
+                showToast('Informe as repetições!', 'warning');
+                repsInput.focus();
+                return;
+            }
+
+            try {
+                await api.addSet(currentSession.id, {
+                    workout_exercise_id: exerciseId,
+                    weight_kg: weight,
+                    reps: reps
+                });
+                showToast(`Série registrada: ${reps} reps @ ${weight}kg`, 'success');
+                repsInput.value = '';
+
+                // Reload sets
+                const sets = await api.getSessionSets(currentSession.id);
+                renderExercises(suggestion.exercises, sets);
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        // Rest timer functions
+        function toggleRestTimer(exerciseId) {
+            if (restTimers[exerciseId]?.running) {
+                clearInterval(restTimers[exerciseId].interval);
+                restTimers[exerciseId].running = false;
+            } else {
+                if (!restTimers[exerciseId]) {
+                    restTimers[exerciseId] = { seconds: 0, running: false, interval: null };
+                }
+                restTimers[exerciseId].running = true;
+                restTimers[exerciseId].interval = setInterval(() => {
+                    restTimers[exerciseId].seconds++;
+                    document.getElementById(`rest-display-${exerciseId}`).textContent = formatTime(restTimers[exerciseId].seconds);
+                }, 1000);
+            }
+        }
+
+        function resetRestTimer(exerciseId) {
+            if (restTimers[exerciseId]) {
+                clearInterval(restTimers[exerciseId].interval);
+                restTimers[exerciseId] = { seconds: 0, running: false, interval: null };
+            }
+            document.getElementById(`rest-display-${exerciseId}`).textContent = '00:00';
+        }
+
+        // Finish session
+        document.getElementById('btn-finish-session').addEventListener('click', async () => {
+            if (!confirm('Finalizar o treino de hoje?')) return;
+            try {
+                const elapsed = Math.floor((Date.now() - mainTimerStart.getTime()) / 1000);
+                await api.finishSession(currentSession.id, elapsed);
+                clearInterval(mainTimerInterval);
+                Object.values(restTimers).forEach(t => clearInterval(t.interval));
+                showToast('Treino finalizado! Parabéns! 🎉', 'success');
+                setTimeout(() => window.location.href = '/dashboard.html', 1500);
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        });
+
+        document.getElementById('btn-logout').addEventListener('click', () => api.logout());
+
+        init();
+    </script>
+</body>
+</html>
